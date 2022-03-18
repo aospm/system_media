@@ -76,6 +76,8 @@ struct mixer_value {
 
 struct mixer_path {
     char *name;
+    /* ID of the sound device for this mixer path */
+    int device;
     unsigned int size;
     unsigned int length;
     struct mixer_setting *setting;
@@ -197,7 +199,7 @@ static struct mixer_path *path_get_by_name(struct audio_route *ar,
     return NULL;
 }
 
-static struct mixer_path *path_create(struct audio_route *ar, const char *name)
+static struct mixer_path *path_create(struct audio_route *ar, const char *name, int device)
 {
     struct mixer_path *new_mixer_path = NULL;
 
@@ -225,6 +227,7 @@ static struct mixer_path *path_create(struct audio_route *ar, const char *name)
 
     /* initialise the new mixer path */
     ar->mixer_path[ar->num_mixer_paths].name = strdup(name);
+    ar->mixer_path[ar->num_mixer_paths].device = device;
     ar->mixer_path[ar->num_mixer_paths].size = 0;
     ar->mixer_path[ar->num_mixer_paths].length = 0;
     ar->mixer_path[ar->num_mixer_paths].setting = NULL;
@@ -471,6 +474,7 @@ static void start_tag(void *data, const XML_Char *tag_name,
     const XML_Char *attr_name = NULL;
     const XML_Char *attr_id = NULL;
     const XML_Char *attr_value = NULL;
+    const XML_Char *attr_device = NULL;
     struct config_parse_state *state = data;
     struct audio_route *ar = state->ar;
     unsigned int i;
@@ -481,6 +485,7 @@ static void start_tag(void *data, const XML_Char *tag_name,
     struct mixer_value mixer_value;
     enum mixer_ctl_type type;
     long* value_array = NULL;
+    int device = -1;
 
     /* Get name, id and value attributes (these may be empty) */
     for (i = 0; attr[i]; i += 2) {
@@ -490,6 +495,8 @@ static void start_tag(void *data, const XML_Char *tag_name,
             attr_id = attr[i + 1];
         else if (strcmp(attr[i], "value") == 0)
             attr_value = attr[i + 1];
+        else if (strcmp(attr[i], "device") == 0)
+            attr_device = attr[i + 1];
     }
 
     /* Look at tags */
@@ -498,8 +505,16 @@ static void start_tag(void *data, const XML_Char *tag_name,
             ALOGE("Unnamed path!");
         } else {
             if (state->level == 1) {
+                if (attr_device != NULL) {
+                    char *end;
+                    device = strtol((char *)attr_device, &end, 10);
+                    if (end == (char *)attr_device) {
+                        ALOGE("Invalid device attribute %s", attr_device);
+                        device = -1;
+                    }
+                }
                 /* top level path: create and stash the path */
-                state->path = path_create(ar, (char *)attr_name);
+                state->path = path_create(ar, (char *)attr_name, device);
                 if (state->path == NULL)
                     ALOGW("path creation failed, please check if the path exists");
             } else {
@@ -959,6 +974,14 @@ int audio_route_force_reset_and_update_path(struct audio_route *ar, const char *
     }
 
     return audio_route_update_path(ar, name, DIRECTION_REVERSE_RESET);
+}
+
+int audio_route_get_device_for_path(struct audio_route *ar, const char *name)
+{
+    struct mixer_path *path = path_get_by_name(ar, name);
+    if (path == NULL)
+        return -1;
+    return path->device;
 }
 
 struct audio_route *audio_route_init(unsigned int card, const char *xml_path)
